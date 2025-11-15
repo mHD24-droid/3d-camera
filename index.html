@@ -1,20 +1,22 @@
 <!DOCTYPE html>
 <html lang="ar">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fallback 3D / AR</title>
-  <script src="https://cdn.babylonjs.com/babylon.js"></script>
-  <script src="https://cdn.babylonjs.com/loaders/babylon.glTFFileLoader.js"></script>
-  <style>
-    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; }
-    #renderCanvas { width:100%; height:100%; touch-action:none; display:block; }
-    .ui { position:absolute; top:12px; left:12px; display:flex; flex-direction:column; gap:8px; z-index:999; }
-    .ui button { padding:8px 12px; border-radius:8px; border:none; font-weight:600; background:#ffffffaa; }
-    #status { position:absolute; right:12px; top:12px; background:#0008; color:#fff; padding:8px 10px; border-radius:8px; z-index:999; max-width:45%; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AR-like Filter</title>
+<script src="https://cdn.babylonjs.com/babylon.js"></script>
+<script src="https://cdn.babylonjs.com/loaders/babylon.glTFFileLoader.js"></script>
+<style>
+  html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; }
+  #cam { position:absolute; width:100%; height:100%; object-fit:cover; z-index:0; }
+  #renderCanvas { position:absolute; width:100%; height:100%; z-index:1; pointer-events:none; }
+  .ui { position:absolute; top:12px; left:12px; display:flex; flex-direction:column; gap:8px; z-index:2; }
+  .ui button { padding:8px 12px; border-radius:8px; border:none; font-weight:600; background:#ffffffaa; }
+</style>
 </head>
 <body>
+
+<video id="cam" autoplay playsinline muted></video>
 <canvas id="renderCanvas"></canvas>
 
 <div class="ui">
@@ -23,29 +25,34 @@
   <button id="btn-rotate">تدوير ↻</button>
   <button id="btn-reset">إعادة الوضع</button>
 </div>
-<div id="status">Fallback 3D: يمكنك التحكم بالموديل باستخدام الأزرار.</div>
 
 <script>
 (async function(){
+  // فتح الكاميرا الخلفية
+  const video = document.getElementById('cam');
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio:false });
+    video.srcObject = stream;
+  } catch(e){
+    alert('تعذر فتح الكاميرا: ' + e.message);
+  }
+
+  // Babylon.js
   const canvas = document.getElementById('renderCanvas');
   const engine = new BABYLON.Engine(canvas, true);
   const scene = new BABYLON.Scene(engine);
-  scene.clearColor = new BABYLON.Color4(0,0,0,0);
+  scene.clearColor = new BABYLON.Color4(0,0,0,0); // شفاف
 
-  // كاميرا ArcRotate للتفاعل مع اللمس
-  const camera = new BABYLON.ArcRotateCamera("camera", Math.PI/2, Math.PI/2.5, 3, BABYLON.Vector3.Zero(), scene);
+  const camera = new BABYLON.ArcRotateCamera("camera", Math.PI/2, Math.PI/2.5, 2.5, BABYLON.Vector3.Zero(), scene);
   camera.attachControl(canvas, true);
 
-  // ضوء
   const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0,1,0), scene);
-  light.intensity = 1.0;
 
-  // جذع النموذج
+  // جذع الموديل
   const modelRoot = new BABYLON.TransformNode("modelRoot", scene);
   modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
-  modelRoot.isVisible = true;
 
-  // تحميل نموذج glb إذا موجود، أو استخدم مكعب افتراضي
+  // تحميل نموذج glb إذا موجود
   try {
     const result = await BABYLON.SceneLoader.ImportMeshAsync("", "./", "model.glb", scene);
     result.meshes.forEach(m => m.parent = modelRoot);
@@ -55,28 +62,24 @@
     box.parent = modelRoot;
   }
 
-  // Run loop
   engine.runRenderLoop(()=>scene.render());
   window.addEventListener('resize', ()=>engine.resize());
 
   // أزرار التحكم
-  document.getElementById('btn-scale-up').onclick = ()=> {
-    modelRoot.scaling = modelRoot.scaling.multiplyByFloats(1.15,1.15,1.15);
-  };
-  document.getElementById('btn-scale-down').onclick = ()=> {
-    modelRoot.scaling = modelRoot.scaling.multiplyByFloats(0.85,0.85,0.85);
-  };
-  document.getElementById('btn-rotate').onclick = ()=> {
-    const rot = BABYLON.Quaternion.FromEulerAngles(0, BABYLON.Tools.ToRadians(30), 0);
+  document.getElementById('btn-scale-up').onclick = ()=> modelRoot.scaling = modelRoot.scaling.multiplyByFloats(1.15,1.15,1.15);
+  document.getElementById('btn-scale-down').onclick = ()=> modelRoot.scaling = modelRoot.scaling.multiplyByFloats(0.85,0.85,0.85);
+  document.getElementById('btn-rotate').onclick = ()=>{
+    const rot = BABYLON.Quaternion.FromEulerAngles(0, BABYLON.Tools.ToRadians(30),0);
     if(!modelRoot.rotationQuaternion) modelRoot.rotationQuaternion = BABYLON.Quaternion.Identity();
     modelRoot.rotationQuaternion = rot.multiply(modelRoot.rotationQuaternion);
   };
-  document.getElementById('btn-reset').onclick = ()=> {
+  document.getElementById('btn-reset').onclick = ()=>{
     modelRoot.position = BABYLON.Vector3.Zero();
     modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
     modelRoot.rotationQuaternion = null;
   };
 })();
 </script>
+
 </body>
 </html>
