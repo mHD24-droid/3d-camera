@@ -1,83 +1,186 @@
 <!DOCTYPE html>
 <html lang="ar">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Fallback 3D / AR</title>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>AR - Babylon.js (بدون ماركر)</title>
+
+  <!-- BabylonJS (مجمّع) -->
   <script src="https://cdn.babylonjs.com/babylon.js"></script>
+  <!-- Loader لدعم glTF/glb -->
   <script src="https://cdn.babylonjs.com/loaders/babylon.glTFFileLoader.js"></script>
+
   <style>
-    html, body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; background:#000; }
-    #renderCanvas { width:100%; height:100%; touch-action:none; display:block; }
-    .ui { position:absolute; top:12px; left:12px; display:flex; flex-direction:column; gap:8px; z-index:999; }
-    .ui button { padding:8px 12px; border-radius:8px; border:none; font-weight:600; background:#ffffffaa; }
-    #status { position:absolute; right:12px; top:12px; background:#0008; color:#fff; padding:8px 10px; border-radius:8px; z-index:999; max-width:45%; }
+    html,body { width:100%; height:100%; margin:0; padding:0; overflow:hidden; direction: rtl; font-family: Arial, sans-serif; }
+    #renderCanvas { width:100%; height:100%; touch-action: none; display:block; background:#000; }
+    .ui {
+      position: absolute;
+      left: 12px; top: 12px;
+      display:flex; gap:8px; flex-direction: column;
+      z-index: 999;
+    }
+    .ui button {
+      background:#fff8; border:1px solid #0002; padding:8px 12px; border-radius:8px; font-weight:600;
+    }
+    .notice {
+      position:absolute; right:12px; top:12px; z-index:999; background:#0008; color:#fff; padding:8px 10px; border-radius:8px;
+      font-size:14px;
+    }
   </style>
 </head>
 <body>
-<canvas id="renderCanvas"></canvas>
+  <canvas id="renderCanvas"></canvas>
 
-<div class="ui">
-  <button id="btn-scale-up">تكبير +</button>
-  <button id="btn-scale-down">تصغير −</button>
-  <button id="btn-rotate">تدوير ↻</button>
-  <button id="btn-reset">إعادة الوضع</button>
-</div>
-<div id="status">Fallback 3D: يمكنك التحكم بالموديل باستخدام الأزرار.</div>
+  <div class="notice" id="status">اضغط "بدء AR" ثم حرك الكاميرا للبحث عن سطح لوضع النموذج</div>
+
+  <div class="ui">
+    <button id="btn-start-ar">بدء AR</button>
+    <button id="btn-scale-up">تكبير +</button>
+    <button id="btn-scale-down">تصغير −</button>
+    <button id="btn-rotate">تدوير ↻</button>
+    <button id="btn-reset">إعادة الوضع</button>
+  </div>
 
 <script>
 (async function(){
-  const canvas = document.getElementById('renderCanvas');
-  const engine = new BABYLON.Engine(canvas, true);
+
+  const canvas = document.getElementById("renderCanvas");
+  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
   const scene = new BABYLON.Scene(engine);
   scene.clearColor = new BABYLON.Color4(0,0,0,0);
 
-  // كاميرا ArcRotate للتفاعل مع اللمس
-  const camera = new BABYLON.ArcRotateCamera("camera", Math.PI/2, Math.PI/2.5, 3, BABYLON.Vector3.Zero(), scene);
-  camera.attachControl(canvas, true);
-
-  // ضوء
+  // ضوء وكاميرا عاديان في المشهد (لن يكونا مرئيين في AR ولكن مفيدان)
   const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0,1,0), scene);
   light.intensity = 1.0;
 
-  // جذع النموذج
+  // عجلة صغيرة (reticle) لعرض مكان وضع الموديل
+  const reticle = BABYLON.MeshBuilder.CreateTorus("reticle", {thickness:0.01, diameter:0.15, tessellation:24}, scene);
+  reticle.rotationQuaternion = null;
+  reticle.material = new BABYLON.StandardMaterial("retMat", scene);
+  reticle.material.diffuseColor = new BABYLON.Color3(0.2,0.8,1);
+  reticle.isVisible = false;
+
+  // المجموعة الحاملة للموديل
   const modelRoot = new BABYLON.TransformNode("modelRoot", scene);
   modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
-  modelRoot.isVisible = true;
+  modelRoot.isVisible = false;
 
-  // تحميل نموذج glb إذا موجود، أو استخدم مكعب افتراضي
+  // اضف ظل بسيط (اختياري)
+  const ground = BABYLON.MeshBuilder.CreateGround("g", {width:1, height:1}, scene);
+  ground.isVisible = false;
+
+  // تحميل الموديل (model.glb في نفس المجلد)
+  let imported = null;
   try {
-    const result = await BABYLON.SceneLoader.ImportMeshAsync("", "./", "car.glb", scene);
-    result.meshes.forEach(m => m.parent = modelRoot);
-  } catch(e){
-    console.warn("لم يتم تحميل model.glb، سيتم استخدام مكعب افتراضي.");
-    const box = BABYLON.MeshBuilder.CreateBox("box", {size:0.5}, scene);
-    box.parent = modelRoot;
+    imported = await BABYLON.SceneLoader.AppendAsync("", "model.glb", scene, undefined, ".glb");
+    // انقل كل ما تم استيراده داخل modelRoot
+    scene.meshes.forEach(m => { if (m !== reticle && m !== ground) m.parent = modelRoot; });
+    modelRoot.isVisible = false;
+  } catch (e) {
+    alert("فشل تحميل model.glb. تحقق من وضع الملف في نفس المجلد واسم الملف صحيح.");
+    console.error(e);
   }
 
-  // Run loop
-  engine.runRenderLoop(()=>scene.render());
-  window.addEventListener('resize', ()=>engine.resize());
+  // تحديث العرض 
+  engine.runRenderLoop(function(){
+    scene.render();
+  });
 
-  // أزرار التحكم
-  document.getElementById('btn-scale-up').onclick = ()=> {
-    modelRoot.scaling = modelRoot.scaling.multiplyByFloats(1.15,1.15,1.15);
+  window.addEventListener("resize", function(){ engine.resize(); });
+
+  // ---------- WebXR AR setup ----------
+  let xrExperience = null;
+  let hitTestFeature = null;
+  let placed = false;
+
+  async function startARSession(){
+    if (!navigator.xr) {
+      alert("WebXR غير مدعوم في متصفحك. استخدم Chrome محدث على Android.");
+      return;
+    }
+
+    // انشاء تجربة XR افتراضية - immersive-ar
+    xrExperience = await scene.createDefaultXRExperienceAsync({
+      uiOptions: { sessionMode: 'immersive-ar' },
+      optionalFeatures: true
+    });
+
+    // تعطيل كاميرا Babylon الافتراضية داخل XR (سيتم التحكم عبر الجلسة)
+    xrExperience.baseExperience.camera.detachControl();
+
+    // تمكين ميزة hit-test
+    const fm = xrExperience.baseExperience.featuresManager;
+    hitTestFeature = fm.enableFeature(BABYLON.WebXRHitTest, "latest", {
+      offsetRay: undefined
+    });
+
+    // عندما تصل نتائج الضرب (hit test)
+    hitTestFeature.onHitTestResultObservable.add((results) => {
+      if (!results || results.length === 0) {
+        reticle.isVisible = false;
+        return;
+      }
+      // نأخذ أول نتيجة ونضع الـ reticle هناك
+      const hit = results[0];
+      const pose = hit.transformationMatrix; // Matrix4
+      // استخدم المصفوفة لتحريك reticle
+      BABYLON.Matrix.Decompose(pose, reticle.scaling, reticle.rotationQuaternion, reticle.position);
+      reticle.isVisible = true;
+    });
+
+    // عند النقر على الشاشة أثناء جلسة AR نضع الموديل في موقع الـ reticle
+    scene.onPointerObservable.add((pointerInfo) => {
+      if (!reticle.isVisible) return;
+      if (pointerInfo.type === BABYLON.PointerEventTypes.POINTERDOWN) {
+        // انسخ موقع reticle إلى modelRoot
+        modelRoot.position.copyFrom(reticle.position);
+        modelRoot.rotationQuaternion = reticle.rotationQuaternion ? reticle.rotationQuaternion.clone() : null;
+        modelRoot.isVisible = true;
+        placed = true;
+        document.getElementById("status").innerText = "تم وضع النموذج — استخدم الأزرار للتحكم";
+      }
+    });
+
+    document.getElementById("status").innerText = "انطلق: حرّك الكاميرا لالتقاط سطح - ستظهر حلقة للتثبيت";
+  }
+
+  // ---------- أزرار التحكم ----------
+  const btnStart = document.getElementById("btn-start-ar");
+  const btnScaleUp = document.getElementById("btn-scale-up");
+  const btnScaleDown = document.getElementById("btn-scale-down");
+  const btnRotate = document.getElementById("btn-rotate");
+  const btnReset = document.getElementById("btn-reset");
+
+  btnStart.onclick = async () => {
+    btnStart.disabled = true;
+    await startARSession();
   };
-  document.getElementById('btn-scale-down').onclick = ()=> {
-    modelRoot.scaling = modelRoot.scaling.multiplyByFloats(0.85,0.85,0.85);
+
+  btnScaleUp.onclick = () => {
+    if (!placed) { alert("ضع النموذج أولاً باللمس على الحلقة."); return; }
+    modelRoot.scaling = modelRoot.scaling.scale(1.15);
   };
-  document.getElementById('btn-rotate').onclick = ()=> {
+  btnScaleDown.onclick = () => {
+    if (!placed) { alert("ضع النموذج أولاً باللمس على الحلقة."); return; }
+    modelRoot.scaling = modelRoot.scaling.scale(0.85);
+  };
+  btnRotate.onclick = () => {
+    if (!placed) { alert("ضع النموذج أولاً باللمس على الحلقة."); return; }
+    // تدوير حول المحور Y بمقدار 30 درجة
     const rot = BABYLON.Quaternion.FromEulerAngles(0, BABYLON.Tools.ToRadians(30), 0);
-    if(!modelRoot.rotationQuaternion) modelRoot.rotationQuaternion = BABYLON.Quaternion.Identity();
+    if (!modelRoot.rotationQuaternion) modelRoot.rotationQuaternion = BABYLON.Quaternion.Identity();
     modelRoot.rotationQuaternion = rot.multiply(modelRoot.rotationQuaternion);
   };
-  document.getElementById('btn-reset').onclick = ()=> {
+  btnReset.onclick = () => {
     modelRoot.position = BABYLON.Vector3.Zero();
     modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
     modelRoot.rotationQuaternion = null;
+    modelRoot.isVisible = false;
+    placed = false;
+    document.getElementById("status").innerText = 'اضغط "بدء AR" ثم حرك الكاميرا للبحث عن سطح لوضع النموذج';
   };
+
 })();
 </script>
 </body>
 </html>
-
