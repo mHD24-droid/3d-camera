@@ -72,14 +72,16 @@
   // تحميل الموديل (model.glb في نفس المجلد)
   let imported = null;
   try {
-    imported = await BABYLON.SceneLoader.AppendAsync("", "car.glb", scene, undefined, ".glb");
-    // انقل كل ما تم استيراده داخل modelRoot
-    scene.meshes.forEach(m => { if (m !== reticle && m !== ground) m.parent = modelRoot; });
-    modelRoot.isVisible = false;
-  } catch (e) {
-    alert("فشل تحميل model.glb. تحقق من وضع الملف في نفس المجلد واسم الملف صحيح.");
-    console.error(e);
-  }
+  imported = await BABYLON.SceneLoader.AppendAsync("", "car.glb", scene, undefined, ".glb");
+  scene.meshes.forEach(m => { 
+    if (m !== reticle && m !== ground) m.parent = modelRoot; 
+  });
+  modelRoot.isVisible = false;
+  console.log("تم تحميل car.glb بنجاح!");
+} catch (e) {
+  console.error("فشل تحميل car.glb. تحقق من المسار واسم الملف:", e);
+  alert("فشل تحميل car.glb. تأكد أن الملف في نفس المجلد واسم الملف صحيح.");
+}
 
   // تحديث العرض 
   engine.runRenderLoop(function(){
@@ -184,4 +186,5 @@
 </script>
 </body>
 </html>
+
 
