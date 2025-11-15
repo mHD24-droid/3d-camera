@@ -72,7 +72,7 @@
   // تحميل الموديل (model.glb في نفس المجلد)
   let imported = null;
   try {
-    imported = await BABYLON.SceneLoader.AppendAsync("", "model.glb", scene, undefined, ".glb");
+    imported = await BABYLON.SceneLoader.AppendAsync("", "car.glb", scene, undefined, ".glb");
     // انقل كل ما تم استيراده داخل modelRoot
     scene.meshes.forEach(m => { if (m !== reticle && m !== ground) m.parent = modelRoot; });
     modelRoot.isVisible = false;
@@ -184,3 +184,4 @@
 </script>
 </body>
 </html>
+
