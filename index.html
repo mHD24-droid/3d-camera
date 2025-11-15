@@ -1,186 +1,217 @@
 <!DOCTYPE html>
 <html lang="ar">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>AR - Babylon.js (بدون ماركر)</title>
-
-  <!-- BabylonJS (مجمّع) -->
-  <script src="https://cdn.babylonjs.com/babylon.js"></script>
-  <!-- Loader لدعم glTF/glb -->
-  <script src="https://cdn.babylonjs.com/loaders/babylon.glTFFileLoader.js"></script>
-
-  <style>
-    html,body { width:100%; height:100%; margin:0; padding:0; overflow:hidden; direction: rtl; font-family: Arial, sans-serif; }
-    #renderCanvas { width:100%; height:100%; touch-action: none; display:block; background:#000; }
-    .ui {
-      position: absolute;
-      left: 12px; top: 12px;
-      display:flex; gap:8px; flex-direction: column;
-      z-index: 999;
-    }
-    .ui button {
-      background:#fff8; border:1px solid #0002; padding:8px 12px; border-radius:8px; font-weight:600;
-    }
-    .notice {
-      position:absolute; right:12px; top:12px; z-index:999; background:#0008; color:#fff; padding:8px 10px; border-radius:8px;
-      font-size:14px;
-    }
-  </style>
-</head>
-<body>
-  <canvas id="renderCanvas"></canvas>
-
-  <div class="notice" id="status">اضغط "بدء AR" ثم حرك الكاميرا للبحث عن سطح لوضع النموذج</div>
-
-  <div class="ui">
-    <button id="btn-start-ar">بدء AR</button>
-    <button id="btn-scale-up">تكبير +</button>
-    <button id="btn-scale-down">تصغير −</button>
-    <button id="btn-rotate">تدوير ↻</button>
-    <button id="btn-reset">إعادة الوضع</button>
-  </div>
-
-<script>
-(async function(){
-
-  const canvas = document.getElementById("renderCanvas");
-  const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
-  const scene = new BABYLON.Scene(engine);
-  scene.clearColor = new BABYLON.Color4(0,0,0,0);
-
-  // ضوء وكاميرا عاديان في المشهد (لن يكونا مرئيين في AR ولكن مفيدان)
-  const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0,1,0), scene);
-  light.intensity = 1.0;
-
-  // عجلة صغيرة (reticle) لعرض مكان وضع الموديل
-  const reticle = BABYLON.MeshBuilder.CreateTorus("reticle", {thickness:0.01, diameter:0.15, tessellation:24}, scene);
-  reticle.rotationQuaternion = null;
-  reticle.material = new BABYLON.StandardMaterial("retMat", scene);
-  reticle.material.diffuseColor = new BABYLON.Color3(0.2,0.8,1);
-  reticle.isVisible = false;
-
-  // المجموعة الحاملة للموديل
-  const modelRoot = new BABYLON.TransformNode("modelRoot", scene);
-  modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
-  modelRoot.isVisible = false;
-
-  // اضف ظل بسيط (اختياري)
-  const ground = BABYLON.MeshBuilder.CreateGround("g", {width:1, height:1}, scene);
-  ground.isVisible = false;
-
-  // تحميل الموديل (model.glb في نفس المجلد)
-  let imported = null;
-  try {
-    imported = await BABYLON.SceneLoader.AppendAsync("", "model.glb", scene, undefined, ".glb");
-    // انقل كل ما تم استيراده داخل modelRoot
-    scene.meshes.forEach(m => { if (m !== reticle && m !== ground) m.parent = modelRoot; });
-    modelRoot.isVisible = false;
-  } catch (e) {
-    alert("فشل تحميل model.glb. تحقق من وضع الملف في نفس المجلد واسم الملف صحيح.");
-    console.error(e);
-  }
-
-  // تحديث العرض 
-  engine.runRenderLoop(function(){
-    scene.render();
-  });
-
-  window.addEventListener("resize", function(){ engine.resize(); });
-
-  // ---------- WebXR AR setup ----------
-  let xrExperience = null;
-  let hitTestFeature = null;
-  let placed = false;
-
-  async function startARSession(){
-    if (!navigator.xr) {
-      alert("WebXR غير مدعوم في متصفحك. استخدم Chrome محدث على Android.");
-      return;
-    }
-
-    // انشاء تجربة XR افتراضية - immersive-ar
-    xrExperience = await scene.createDefaultXRExperienceAsync({
-      uiOptions: { sessionMode: 'immersive-ar' },
-      optionalFeatures: true
-    });
-
-    // تعطيل كاميرا Babylon الافتراضية داخل XR (سيتم التحكم عبر الجلسة)
-    xrExperience.baseExperience.camera.detachControl();
-
-    // تمكين ميزة hit-test
-    const fm = xrExperience.baseExperience.featuresManager;
-    hitTestFeature = fm.enableFeature(BABYLON.WebXRHitTest, "latest", {
-      offsetRay: undefined
-    });
-
-    // عندما تصل نتائج الضرب (hit test)
-    hitTestFeature.onHitTestResultObservable.add((results) => {
-      if (!results || results.length === 0) {
-        reticle.isVisible = false;
-        return;
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Babylon WebXR AR Demo — ثابت ومصحح</title>
+    <style>
+      html, body {
+        margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #000; font-family: Arial, sans-serif; direction: rtl;
       }
-      // نأخذ أول نتيجة ونضع الـ reticle هناك
-      const hit = results[0];
-      const pose = hit.transformationMatrix; // Matrix4
-      // استخدم المصفوفة لتحريك reticle
-      BABYLON.Matrix.Decompose(pose, reticle.scaling, reticle.rotationQuaternion, reticle.position);
-      reticle.isVisible = true;
-    });
+      #renderCanvas { width:100%; height:100%; touch-action:none; display:block; }
+      .ui { position: absolute; left: 12px; top: 12px; display:flex; gap:8px; flex-direction: column; z-index:999; }
+      .ui button { background: #ffffffee; border: 1px solid #0002; padding:8px 12px; border-radius:8px; font-weight:600; }
+      #status { position:absolute; right:12px; top:12px; z-index:999; background:#000b; color:#fff; padding:8px 10px; border-radius:8px; max-width:45%; }
+      #debug { position: absolute; right:12px; bottom:12px; z-index:999; background:#fff8; color:#000; padding:8px 10px; border-radius:8px; max-width:45%; font-size:12px; }
+    </style>
 
-    // عند النقر على الشاشة أثناء جلسة AR نضع الموديل في موقع الـ reticle
-    scene.onPointerObservable.add((pointerInfo) => {
-      if (!reticle.isVisible) return;
-      if (pointerInfo.type === BABYLON.PointerEventTypes.POINTERDOWN) {
-        // انسخ موقع reticle إلى modelRoot
-        modelRoot.position.copyFrom(reticle.position);
-        modelRoot.rotationQuaternion = reticle.rotationQuaternion ? reticle.rotationQuaternion.clone() : null;
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/loaders/babylon.glTFFileLoader.js"></script>
+  </head>
+  <body>
+    <canvas id="renderCanvas"></canvas>
+
+    <div class="ui">
+      <button id="btn-start-ar">بدء AR</button>
+      <button id="btn-scale-up">تكبير +</button>
+      <button id="btn-scale-down">تصغير −</button>
+      <button id="btn-rotate">تدوير ↻</button>
+      <button id="btn-reset">إعادة الوضع</button>
+    </div>
+
+    <div id="status">جاهز. اضغط "بدء AR" لاختبار الواقع المعزز أو استخدم النسخة الاحتياطية ثلاثية الأبعاد.</div>
+    <div id="debug" style="display:none"></div>
+
+    <script>
+    (async function(){
+      const canvas = document.getElementById('renderCanvas');
+      const statusEl = document.getElementById('status');
+      const debugEl = document.getElementById('debug');
+
+      const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true });
+      const scene = new BABYLON.Scene(engine);
+      scene.clearColor = new BABYLON.Color4(0,0,0,0);
+
+      // كاميرا وإضاءة احتياطية لعرض 3D بدون XR
+      const camera = new BABYLON.ArcRotateCamera('camera', Math.PI/2, Math.PI/2.8, 2, BABYLON.Vector3.Zero(), scene);
+      camera.attachControl(canvas, true);
+      const light = new BABYLON.HemisphericLight('h', new BABYLON.Vector3(0,1,0), scene);
+
+      // أرضية غير مرئية تُستخدم كمرجع
+      const ground = BABYLON.MeshBuilder.CreateGround('ground', {width:4, height:4}, scene);
+      ground.isVisible = false;
+
+      // جذع الموديل (يمكن وضع glb داخله لاحقًا)
+      const modelRoot = new BABYLON.TransformNode('modelRoot', scene);
+      modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
+      modelRoot.isVisible = true; // في النسخة الاحتياطية نعرض النموذج مباشرة
+
+      // نموذج افتراضي (مربع) كنسخة احتياطية لو لم يتم تحميل glb
+      const fallbackBox = BABYLON.MeshBuilder.CreateBox('box', {size:0.3}, scene);
+      fallbackBox.parent = modelRoot;
+      fallbackBox.position = new BABYLON.Vector3(0,0.15,0);
+
+      // محاولة تحميل model.glb من نفس المجلد — إن لم يوجد نستخدم المربع
+      let glbLoaded = false;
+      try{
+        await BABYLON.SceneLoader.ImportMeshAsync('', './', 'model.glb', scene);
+        // ضع كل الـ meshes المحمّلة تحت modelRoot
+        scene.meshes.forEach(m => { if (m !== fallbackBox && m !== ground) m.parent = modelRoot; });
+        fallbackBox.isVisible = false;
+        glbLoaded = true;
+        console.log('GLB loaded');
+      } catch(e){
+        console.warn('لم يتم العثور على model.glb أو فشل التحميل — سيتم استخدام النموذج الافتراضي.');
+      }
+
+      engine.runRenderLoop(()=>{ scene.render(); });
+      window.addEventListener('resize', ()=> engine.resize());
+
+      // عناصر UI
+      const btnStart = document.getElementById('btn-start-ar');
+      const btnScaleUp = document.getElementById('btn-scale-up');
+      const btnScaleDown = document.getElementById('btn-scale-down');
+      const btnRotate = document.getElementById('btn-rotate');
+      const btnReset = document.getElementById('btn-reset');
+
+      // حالة وضع النموذج (تم تثبيته في العالم أم لا)
+      let placed = false;
+      let xrHelper = null;
+      let hitTest = null;
+      let reticle = null;
+
+      // دالة لمشاهدة تفاصيل الخطأ للمطور
+      function debug(msg){
+        debugEl.style.display = 'block';
+        debugEl.innerText = (new Date()).toLocaleTimeString() + ' — ' + msg + '\n' + debugEl.innerText;
+        console.log(msg);
+      }
+
+      // فحص دعم WebXR بطريقة آمنة (تجنّب استدعاءات قد ترمي SecurityError)
+      async function isImmersiveArSupportedSafe(){
+        if (!('xr' in navigator)) return false;
+        try {
+          if (typeof navigator.xr.isSessionSupported === 'function'){
+            return await navigator.xr.isSessionSupported('immersive-ar');
+          }
+          // بعض البيئات لا توفر isSessionSupported — اعتبرها غير مدعومة
+          return false;
+        } catch (err) {
+          // SecurityError يحدث هنا إذا سياسة الأذونات تمنع xr
+          debug('isSessionSupported threw: ' + (err && err.message));
+          return false;
+        }
+      }
+
+      // دالة بدء جلسة AR مع معالجة الأخطاء
+      async function startAR(){
+        // تحقق من كون السياق آمن (HTTPS أو localhost)
+        if (!window.isSecureContext) {
+          statusEl.innerText = 'للأسف: WebXR يتطلب HTTPS. استخدم GitHub Pages أو https:// أو localhost.';
+          return;
+        }
+
+        const supported = await isImmersiveArSupportedSafe();
+        if (!supported){
+          statusEl.innerText = 'الواقع المعزز (WebXR) غير مدعوم أو محجوب في هذا المتصفح/الصفحة. سيتم استخدام وضع 3D غير AR.';
+          return;
+        }
+
+        statusEl.innerText = 'يدعم المتصفح AR — جارٍ تهيئة جلسة WebXR ...';
+
+        try{
+          // أنشئ تجربة XR (تتطلب ميزات من المتصفح)
+          xrHelper = await scene.createDefaultXRExperienceAsync({ uiOptions: { sessionMode: 'immersive-ar' }, optionalFeatures: true });
+
+          // فعّل ميزة hit-test
+          const fm = xrHelper.baseExperience.featuresManager;
+          try{
+            hitTest = fm.enableFeature(BABYLON.WebXRHitTest, 'latest');
+          } catch(e){ debug('تعذر تفعيل ميزة hit-test: '+ e); }
+
+          // أنشئ reticle لتحديد السطح
+          reticle = BABYLON.MeshBuilder.CreateTorus('ret', {thickness:0.01, diameter:0.15, tessellation:24}, scene);
+          reticle.material = new BABYLON.StandardMaterial('retMat', scene);
+          reticle.material.emissiveColor = new BABYLON.Color3(0.2,0.8,1);
+          reticle.isVisible = false;
+
+          // تحديث موقع reticle من نتائج hit-test
+          if (hitTest){
+            hitTest.onHitTestResultObservable.add((results) => {
+              if (!results || results.length === 0){ reticle.isVisible = false; return; }
+              const hit = results[0];
+              BABYLON.Matrix.Decompose(hit.transformationMatrix, reticle.scaling, reticle.rotationQuaternion, reticle.position);
+              reticle.isVisible = true;
+            });
+          }
+
+          // عند النقر باللمس: ضع النموذج عند موقع reticle
+          scene.onPointerObservable.add((pi) => {
+            if (!reticle || !reticle.isVisible) return;
+            if (pi.type === BABYLON.PointerEventTypes.POINTERDOWN){
+              modelRoot.position.copyFrom(reticle.position);
+              if (reticle.rotationQuaternion) {
+                modelRoot.rotationQuaternion = reticle.rotationQuaternion.clone();
+              }
+              placed = true;
+              statusEl.innerText = 'تم وضع النموذج — يمكنك الآن استخدام أزرار التكبير/التدوير.';
+            }
+          });
+
+          statusEl.innerText = 'حسناً — حرّك الكاميرا للعثور على السطح ثم اضغط على الشاشة لوضع النموذج.';
+
+        } catch(err){
+          debug('خطأ عند تهيئة XR: ' + (err && err.message));
+          statusEl.innerText = 'فشل تهيئة WebXR — سيتم استخدام وضع 3D التقليدي كبديل.';
+          // لا نرمي الخطأ، فقط نستمر في وضع 3D الافتراضي
+        }
+      }
+
+      // أزرار التحكم
+      btnStart.onclick = async () => {
+        btnStart.disabled = true;
+        await startAR();
+      };
+
+      btnScaleUp.onclick = () => {
+        if (!placed && !glbLoaded) { alert('لم يتم وضع النموذج في العالم — لكن يمكنك تكبير النسخة الاحتياطية.'); }
+        modelRoot.scaling = modelRoot.scaling.multiplyByFloats(1.15,1.15,1.15);
+      };
+      btnScaleDown.onclick = () => {
+        modelRoot.scaling = modelRoot.scaling.multiplyByFloats(0.85,0.85,0.85);
+      };
+      btnRotate.onclick = () => {
+        const rot = BABYLON.Quaternion.FromEulerAngles(0, BABYLON.Tools.ToRadians(30), 0);
+        if (!modelRoot.rotationQuaternion) modelRoot.rotationQuaternion = BABYLON.Quaternion.Identity();
+        modelRoot.rotationQuaternion = rot.multiply(modelRoot.rotationQuaternion);
+      };
+      btnReset.onclick = () => {
+        modelRoot.position = BABYLON.Vector3.Zero();
+        modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
+        modelRoot.rotationQuaternion = null;
         modelRoot.isVisible = true;
-        placed = true;
-        document.getElementById("status").innerText = "تم وضع النموذج — استخدم الأزرار للتحكم";
-      }
-    });
+        placed = false;
+        statusEl.innerText = 'تمت إعادة الوضع.';
+      };
 
-    document.getElementById("status").innerText = "انطلق: حرّك الكاميرا لالتقاط سطح - ستظهر حلقة للتثبيت";
-  }
+      // توجيهات سريعة للمستخدم إذا ظهر خطأ سياسة الأذونات
+      (function checkPermPolicyHint(){
+        // لا نعتبر هذا فشلاً نهائياً — مجرد تلميح.
+        if (!window.isSecureContext){ debug('بيئة غير آمنة (ليس HTTPS) — WebXR سيُمنع'); }
+        if (!('xr' in navigator)) debug('navigator.xr غير موجود — المتصفح قد لا يدعم WebXR');
+      })();
 
-  // ---------- أزرار التحكم ----------
-  const btnStart = document.getElementById("btn-start-ar");
-  const btnScaleUp = document.getElementById("btn-scale-up");
-  const btnScaleDown = document.getElementById("btn-scale-down");
-  const btnRotate = document.getElementById("btn-rotate");
-  const btnReset = document.getElementById("btn-reset");
-
-  btnStart.onclick = async () => {
-    btnStart.disabled = true;
-    await startARSession();
-  };
-
-  btnScaleUp.onclick = () => {
-    if (!placed) { alert("ضع النموذج أولاً باللمس على الحلقة."); return; }
-    modelRoot.scaling = modelRoot.scaling.scale(1.15);
-  };
-  btnScaleDown.onclick = () => {
-    if (!placed) { alert("ضع النموذج أولاً باللمس على الحلقة."); return; }
-    modelRoot.scaling = modelRoot.scaling.scale(0.85);
-  };
-  btnRotate.onclick = () => {
-    if (!placed) { alert("ضع النموذج أولاً باللمس على الحلقة."); return; }
-    // تدوير حول المحور Y بمقدار 30 درجة
-    const rot = BABYLON.Quaternion.FromEulerAngles(0, BABYLON.Tools.ToRadians(30), 0);
-    if (!modelRoot.rotationQuaternion) modelRoot.rotationQuaternion = BABYLON.Quaternion.Identity();
-    modelRoot.rotationQuaternion = rot.multiply(modelRoot.rotationQuaternion);
-  };
-  btnReset.onclick = () => {
-    modelRoot.position = BABYLON.Vector3.Zero();
-    modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
-    modelRoot.rotationQuaternion = null;
-    modelRoot.isVisible = false;
-    placed = false;
-    document.getElementById("status").innerText = 'اضغط "بدء AR" ثم حرك الكاميرا للبحث عن سطح لوضع النموذج';
-  };
-
-})();
-</script>
-</body>
+    })();
+    </script>
+  </body>
 </html>
