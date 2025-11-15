@@ -13,8 +13,8 @@
     >
       <a-camera></a-camera>
 
-      <a-entity id="model"
-        gltf-model="model.glb"
+      <a-entity id="car"
+        gltf-model="car.glb"
         position="0 0 0"
         scale="0.5 0.5 0.5"
         visible="false">
@@ -23,7 +23,7 @@
       <script>
         AFRAME.registerComponent("ar-hit-test", {
           init: function () {
-            const model = document.getElementById("model");
+            const model = document.getElementById("car");
             const scene = this.el.sceneEl;
 
             scene.addEventListener("enter-vr", () => {
@@ -70,3 +70,4 @@
     </a-scene>
   </body>
 </html>
+
