@@ -47,7 +47,7 @@
 
   // تحميل نموذج glb إذا موجود، أو استخدم مكعب افتراضي
   try {
-    const result = await BABYLON.SceneLoader.ImportMeshAsync("", "./", "model.glb", scene);
+    const result = await BABYLON.SceneLoader.ImportMeshAsync("", "./", "car.glb", scene);
     result.meshes.forEach(m => m.parent = modelRoot);
   } catch(e){
     console.warn("لم يتم تحميل model.glb، سيتم استخدام مكعب افتراضي.");
@@ -80,3 +80,4 @@
 </script>
 </body>
 </html>
+
