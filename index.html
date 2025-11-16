@@ -1,85 +1,305 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ar">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>AR-like Filter - Babylon.js</title>
-<script src="https://cdn.babylonjs.com/babylon.js"></script>
-<script src="https://cdn.babylonjs.com/loaders/babylon.glTFFileLoader.js"></script>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+<title>Fake Anchor + Ground Lock — Three.js AR-like</title>
+
+<!-- three.js -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.156.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.156.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.156.0/examples/js/loaders/GLTFLoader.js"></script>
+<!-- DeviceOrientationControls (from examples) -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.156.0/examples/js/controls/DeviceOrientationControls.js"></script>
+
 <style>
-  html,body { margin:0; padding:0; width:100%; height:100%; overflow:hidden; }
-  #cam { position:absolute; width:100%; height:100%; object-fit:cover; z-index:0; }
-  #renderCanvas { position:absolute; width:100%; height:100%; z-index:1; pointer-events:none; }
-  .ui { position:absolute; top:12px; left:12px; display:flex; flex-direction:column; gap:8px; z-index:2; }
-  .ui button { padding:8px 12px; border-radius:8px; border:none; font-weight:600; background:#ffffffaa; }
+  html,body { height:100%; margin:0; background:#000; font-family:sans-serif; -webkit-user-select:none; user-select:none; overflow:hidden; }
+  #video { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; transform:scaleX(-1); } /* flip for natural view */
+  #three-container { position:fixed; inset:0; z-index:1; touch-action:none; }
+  #reticle {
+    position: absolute;
+    width: 96px; height:96px;
+    border-radius:50%;
+    left: calc(50% - 48px);
+    top: calc(50% - 48px);
+    border: 3px solid rgba(0,200,255,0.9);
+    box-shadow: 0 0 12px rgba(0,200,255,0.25), inset 0 0 8px rgba(0,200,255,0.08);
+    z-index:2;
+    display:flex; align-items:center; justify-content:center;
+    pointer-events:auto; /* we will tap it */
+    background: rgba(0,0,0,0.06);
+  }
+  #hint { position: absolute; right:12px; top:12px; z-index:3; color:#fff; background: rgba(0,0,0,0.5); padding:8px 10px; border-radius:8px; font-size:14px; }
+  .ui-mini { position:absolute; left:12px; bottom:12px; z-index:3; color:#fff; background: rgba(0,0,0,0.5); padding:6px 8px; border-radius:8px; font-size:13px; }
 </style>
 </head>
 <body>
 
-<video id="cam" autoplay playsinline muted></video>
-<canvas id="renderCanvas"></canvas>
+<video id="video" autoplay playsinline muted></video>
+<div id="three-container"></div>
 
-<div class="ui">
-  <button id="btn-scale-up">تكبير +</button>
-  <button id="btn-scale-down">تصغير −</button>
-  <button id="btn-rotate">تدوير ↻</button>
-  <button id="btn-reset">إعادة الوضع</button>
-</div>
+<!-- الدائرة (reticle) التي يلمسها المستخدم -->
+<div id="reticle" title="اضغط لوضع الموديل"></div>
+
+<div id="hint">حرّك الكاميرا لتدوير، المس الدائرة لوضع الموديل، استخدم pinch للتكبير و two-finger لتدوير.</div>
+<div class="ui-mini">Status: <span id="status">Ready</span></div>
 
 <script>
-(async function(){
-  // فتح الكاميرا الخلفية
-  const video = document.getElementById('cam');
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' }, audio:false });
+(async ()=>{
+
+// === إعداد الفيديو (كاميرا خلفية) ===
+const video = document.getElementById('video');
+async function startCamera(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio:false });
     video.srcObject = stream;
-  } catch(e){
-    alert('تعذر فتح الكاميرا: ' + e.message);
+    await video.play();
+  }catch(err){
+    alert('تعذر فتح الكاميرا: ' + (err.message || err));
+    console.error(err);
   }
+}
+await startCamera();
 
-  // Babylon.js
-  const canvas = document.getElementById('renderCanvas');
-  const engine = new BABYLON.Engine(canvas, true);
-  const scene = new BABYLON.Scene(engine);
-  scene.clearColor = new BABYLON.Color4(0,0,0,0);
+// === إعداد Three.js ===
+const container = document.getElementById('three-container');
+const width = window.innerWidth, height = window.innerHeight;
+const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
+renderer.setSize(width, height);
+renderer.setPixelRatio(window.devicePixelRatio || 1);
+container.appendChild(renderer.domElement);
 
-  const camera = new BABYLON.ArcRotateCamera("camera", Math.PI/2, Math.PI/2.5, 2.5, BABYLON.Vector3.Zero(), scene);
-  camera.attachControl(canvas, true);
+const scene = new THREE.Scene();
+scene.background = null;
 
-  const light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0,1,0), scene);
+const camera = new THREE.PerspectiveCamera(60, width/height, 0.01, 1000);
+camera.position.set(0, 0, 0);
 
-  // جذع الموديل
-  const modelRoot = new BABYLON.TransformNode("modelRoot", scene);
-  modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
+// ضوء بسيط
+const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+scene.add(hemi);
+const dir = new THREE.DirectionalLight(0xffffff, 0.8);
+dir.position.set(0.5, 1, 0.3);
+scene.add(dir);
 
-  // تحميل car.glb
-  try {
-    const imported = await BABYLON.SceneLoader.AppendAsync("", "car.glb", scene, undefined, ".glb");
-    imported.meshes.forEach(mesh => { mesh.parent = modelRoot; });
-  } catch(e){
-    console.warn("فشل تحميل car.glb، سيتم استخدام مكعب افتراضي.", e);
-    const box = BABYLON.MeshBuilder.CreateBox("box", {size:0.5}, scene);
-    box.parent = modelRoot;
+// أرضية افتراضية (مستوى يستخدم لوضع object عند المس)
+const planeDistance = 2.0; // مسافة افتراضية لسطح التثبيت بالأمتار
+const placePlane = new THREE.Plane(new THREE.Vector3(0,0,-1), -planeDistance);
+
+// جذع الموديل (Transform)
+const modelRoot = new THREE.Group();
+modelRoot.visible = false;
+scene.add(modelRoot);
+
+// شبكة ظل بسيط
+const shadowMat = new THREE.MeshBasicMaterial({ color:0x000000, opacity:0.25, transparent:true });
+const shadowGeo = new THREE.PlaneGeometry(1.6,1.6);
+const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+shadowMesh.rotation.x = -Math.PI/2;
+shadowMesh.position.y = 0.001;
+shadowMesh.receiveShadow = true;
+shadowMesh.visible = false;
+modelRoot.add(shadowMesh);
+
+// محمل GLTF
+const loader = new THREE.GLTFLoader();
+let modelLoaded = false;
+try {
+  const gltf = await new Promise((res, rej) => {
+    loader.load('car.glb', res, null, err => rej(err));
+  });
+  const root = gltf.scene || gltf.scenes[0];
+  // اضبط حجم وموقع مناسب
+  root.traverse(n => { if(n.isMesh){ n.castShadow = true; n.receiveShadow = true; }});
+  // ضع تحت modelRoot
+  root.scale.set(0.5,0.5,0.5);
+  root.position.set(0,0,0);
+  modelRoot.add(root);
+  modelLoaded = true;
+  console.log('car.glb loaded');
+} catch(e){
+  console.warn('لم يتم تحميل car.glb — سيتم استخدام مكعب افتراضي', e);
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.4,1.2), new THREE.MeshStandardMaterial({color:0x2194ce}));
+  box.position.set(0,0.2,0);
+  modelRoot.add(box);
+  modelLoaded = false;
+}
+
+// === جهاز التوجيه: DeviceOrientationControls لتدوير الكاميرا بناءً على حركة الجهاز ===
+let deviceControls = null;
+if (window.DeviceOrientationEvent){
+  // قد يحتاج طلب إذن على iOS 13+ (handle separately)
+  if (typeof DeviceOrientationEvent.requestPermission === 'function'){
+    // iOS: نطلب الإذن عند أول تفعيل
+    const btn = document.createElement('button');
+    btn.innerText = 'اطلب إذن الحركة';
+    btn.style.cssText = 'position:absolute;z-index:4;right:12px;bottom:12px;padding:8px;border-radius:8px;';
+    document.body.appendChild(btn);
+    btn.onclick = async ()=>{
+      try{
+        const resp = await DeviceOrientationEvent.requestPermission();
+        if (resp === 'granted'){ btn.style.display='none'; initDeviceControls(); }
+        else alert('تم رفض إذن الحركة؛ ستعمل المحاكاة لكن بدون تدوير الجهاز.');
+      }catch(err){ console.warn(err); alert('طلب الإذن غير ممكن: ' + err); }
+    };
+  } else {
+    initDeviceControls();
   }
+}
 
-  engine.runRenderLoop(()=>scene.render());
-  window.addEventListener('resize', ()=>engine.resize());
+function initDeviceControls(){
+  deviceControls = new THREE.DeviceOrientationControls(camera, true);
+  // لا نتصل الآن؛ سنتحدث عن التحديث ضمن اللوب
+}
 
-  // أزرار التحكم
-  document.getElementById('btn-scale-up').onclick = ()=> modelRoot.scaling = modelRoot.scaling.multiplyByFloats(1.15,1.15,1.15);
-  document.getElementById('btn-scale-down').onclick = ()=> modelRoot.scaling = modelRoot.scaling.multiplyByFloats(0.85,0.85,0.85);
-  document.getElementById('btn-rotate').onclick = ()=>{
-    const rot = BABYLON.Quaternion.FromEulerAngles(0, BABYLON.Tools.ToRadians(30),0);
-    if(!modelRoot.rotationQuaternion) modelRoot.rotationQuaternion = BABYLON.Quaternion.Identity();
-    modelRoot.rotationQuaternion = rot.multiply(modelRoot.rotationQuaternion);
-  };
-  document.getElementById('btn-reset').onclick = ()=>{
-    modelRoot.position = BABYLON.Vector3.Zero();
-    modelRoot.scaling = new BABYLON.Vector3(0.5,0.5,0.5);
-    modelRoot.rotationQuaternion = null;
-  };
+// === وظائف: تحويل إحداثي الشاشة (مركز الدائرة) إلى نقطة على plane بعيد بمقدار planeDistance ===
+function screenPointToWorld(x, y){
+  // x,y in screen pixels
+  const nx = (x / renderer.domElement.clientWidth) * 2 - 1;
+  const ny = - (y / renderer.domElement.clientHeight) * 2 + 1;
+  const ndc = new THREE.Vector3(nx, ny, 0.5);
+  ndc.unproject(camera); // now ndc is point on camera space at z
+  // ray from camera to ndc
+  const dir = ndc.sub(camera.position).normalize();
+  const ray = new THREE.Ray(camera.position.clone(), dir);
+  const hit = new THREE.Vector3();
+  const intersect = ray.intersectPlane(placePlane, hit);
+  if (intersect) return hit;
+  // fallback: point at fixed distance
+  return camera.position.clone().add(dir.multiplyScalar(planeDistance));
+}
+
+// === Reticle (دائرة على الشاشة) ===
+const reticle = document.getElementById('reticle');
+const statusEl = document.getElementById('status');
+
+// عند لمس الدائرة => ضع الموديل عند تلك الإحداثيات
+reticle.addEventListener('pointerdown', (ev)=>{
+  ev.preventDefault();
+  // احصل موقع مركز الدائرة على الشاشة
+  const rect = reticle.getBoundingClientRect();
+  const cx = rect.left + rect.width/2;
+  const cy = rect.top + rect.height/2;
+  const worldPos = screenPointToWorld(cx, cy);
+
+  // ضع modelRoot عند الإحداثيات
+  modelRoot.position.copy(worldPos);
+  // اجعل النموذج واقفاً على مستوى الأرض الافتراضي (y=0)
+  // سنحسب ارتفاع بسيط بناءً على bounding box
+  const box = new THREE.Box3().setFromObject(modelRoot);
+  const minY = box.min.y;
+  modelRoot.position.y -= minY; // إجعل القاع عند y=0
+  modelRoot.visible = true;
+  shadowMesh.visible = true;
+  statusEl.innerText = 'تم وضع النموذج';
+});
+
+// === Gesture handling: pinch to scale, one-finger drag to translate in screen plane, two-finger rotate to rotate model ===
+let ongoing = { pointers: new Map(), initialDistance:0, initialScale:1, rotating:false, translating:false, lastPan:null };
+
+function getDistance(p1, p2){
+  const dx = p2.clientX - p1.clientX;
+  const dy = p2.clientY - p1.clientY;
+  return Math.hypot(dx,dy);
+}
+function getAngle(p1,p2){
+  return Math.atan2(p2.clientY - p1.clientY, p2.clientX - p1.clientX);
+}
+
+renderer.domElement.addEventListener('pointerdown', (e)=>{
+  renderer.domElement.setPointerCapture(e.pointerId);
+  ongoing.pointers.set(e.pointerId, e);
+  if (ongoing.pointers.size === 2){
+    const pts = Array.from(ongoing.pointers.values());
+    ongoing.initialDistance = getDistance(pts[0], pts[1]);
+    ongoing.initialAngle = getAngle(pts[0], pts[1]);
+    ongoing.initialScale = modelRoot.scale ? modelRoot.scale.x : modelRoot.scale; // uniform
+    ongoing.rotating = true;
+  } else if (ongoing.pointers.size === 1){
+    ongoing.translating = true;
+    ongoing.lastPan = { x: e.clientX, y: e.clientY };
+  }
+});
+
+renderer.domElement.addEventListener('pointermove', (e)=>{
+  if (!ongoing.pointers.has(e.pointerId)) return;
+  ongoing.pointers.set(e.pointerId, e);
+
+  if (ongoing.pointers.size === 2){
+    // pinch/rotate
+    const pts = Array.from(ongoing.pointers.values());
+    const curDist = getDistance(pts[0], pts[1]);
+    const curAngle = getAngle(pts[0], pts[1]);
+    // scale factor
+    const s = (curDist / ongoing.initialDistance) * ongoing.initialScale;
+    modelRoot.scale.setScalar(s);
+    // rotate based on angle delta: rotate around Y axis
+    const deltaAng = curAngle - ongoing.initialAngle;
+    modelRoot.rotation.y = (modelRoot.rotation.y || 0) + deltaAng;
+    ongoing.initialAngle = curAngle; // continuous rotation
+  } else if (ongoing.translating && ongoing.pointers.size === 1){
+    // convert screen drag to small translation along plane parallel to camera forward
+    const p = Array.from(ongoing.pointers.values())[0];
+    const dx = p.clientX - ongoing.lastPan.x;
+    const dy = p.clientY - ongoing.lastPan.y;
+    ongoing.lastPan.x = p.clientX; ongoing.lastPan.y = p.clientY;
+    // map pixel delta into world move based on camera fov and distance
+    const factor = 0.0015 * (planeDistance); // tune this factor if needed
+    // move along camera's right and up vectors
+    const right = new THREE.Vector3(); camera.getWorldDirection(right); right.cross(camera.up).normalize(); // right
+    const up = camera.up.clone().normalize();
+    modelRoot.position.addScaledVector(right, dx * -factor);
+    modelRoot.position.addScaledVector(up, dy * factor * 0.7);
+  }
+});
+
+renderer.domElement.addEventListener('pointerup', (e)=>{
+  renderer.domElement.releasePointerCapture(e.pointerId);
+  ongoing.pointers.delete(e.pointerId);
+  if (ongoing.pointers.size < 2) ongoing.rotating = false;
+  if (ongoing.pointers.size === 0) ongoing.translating = false;
+});
+
+renderer.domElement.addEventListener('pointercancel', (e)=> {
+  ongoing.pointers.delete(e.pointerId);
+  ongoing.translating = false; ongoing.rotating = false;
+});
+
+// === Fake ground lock: نستخدم ميل الهاتف (deviceorientation beta) لتعديل ارتفاع النموذج قليلاً ===
+let lastBeta = 0;
+window.addEventListener('deviceorientation', (ev)=>{
+  // beta: tilt front/back (degrees); gamma: left/right
+  if (ev.beta !== null){
+    lastBeta = ev.beta;
+    // خريطة بسيطة: عندما تميل للأمام أكثر (beta زيادة) ننقص ارتفاع النموذج قليلاً
+    if (modelRoot.visible){
+      const offset = (ev.beta - 90) / 200; // معدل تعديل صغير
+      modelRoot.position.y = Math.max(0, modelRoot.position.y + offset);
+    }
+  }
+}, true);
+
+// === Animation loop ===
+function animate(){
+  requestAnimationFrame(animate);
+  // update device controls if موجود
+  if (deviceControls) deviceControls.update();
+  // renderer
+  renderer.render(scene, camera);
+}
+animate();
+
+// ضبط تغيير الحجم
+window.addEventListener('resize', ()=>{
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera.aspect = window.innerWidth / window.innerHeight;
+  camera.updateProjectionMatrix();
+});
+
+// لمحة حالة
+statusEl.innerText = 'Ready — اضغط الدائرة لوضع الموديل';
+
 })();
 </script>
-
 </body>
 </html>
