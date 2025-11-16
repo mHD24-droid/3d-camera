@@ -3,105 +3,107 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-<title>Fake Anchor + Ground Lock — Three.js AR-like</title>
+<title>Fake AR — 3D Reticle (Ring) + car.glb</title>
 
 <!-- three.js -->
 <script src="https://cdn.jsdelivr.net/npm/three@0.156.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.156.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.156.0/examples/js/loaders/GLTFLoader.js"></script>
-<!-- DeviceOrientationControls (from examples) -->
-<script src="https://cdn.jsdelivr.net/npm/three@0.156.0/examples/js/controls/DeviceOrientationControls.js"></script>
 
 <style>
-  html,body { height:100%; margin:0; background:#000; font-family:sans-serif; -webkit-user-select:none; user-select:none; overflow:hidden; }
-  #video { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; transform:scaleX(-1); } /* flip for natural view */
-  #three-container { position:fixed; inset:0; z-index:1; touch-action:none; }
-  #reticle {
-    position: absolute;
-    width: 96px; height:96px;
-    border-radius:50%;
-    left: calc(50% - 48px);
-    top: calc(50% - 48px);
-    border: 3px solid rgba(0,200,255,0.9);
-    box-shadow: 0 0 12px rgba(0,200,255,0.25), inset 0 0 8px rgba(0,200,255,0.08);
-    z-index:2;
-    display:flex; align-items:center; justify-content:center;
-    pointer-events:auto; /* we will tap it */
-    background: rgba(0,0,0,0.06);
+  html,body { height:100%; margin:0; background:#000; font-family:Arial, sans-serif; -webkit-user-select:none; user-select:none; overflow:hidden; }
+  #video { position:fixed; inset:0; width:100%; height:100%; object-fit:cover; z-index:0; } /* الكاميرا كخلفية */
+  #three { position:fixed; inset:0; z-index:1; touch-action:none; }
+  #hud {
+    position:fixed; z-index:3; left:12px; top:12px; color:#fff; background:rgba(0,0,0,0.45);
+    padding:8px 10px; border-radius:8px; font-size:14px;
   }
-  #hint { position: absolute; right:12px; top:12px; z-index:3; color:#fff; background: rgba(0,0,0,0.5); padding:8px 10px; border-radius:8px; font-size:14px; }
-  .ui-mini { position:absolute; left:12px; bottom:12px; z-index:3; color:#fff; background: rgba(0,0,0,0.5); padding:6px 8px; border-radius:8px; font-size:13px; }
+  #hint { position:fixed; right:12px; top:12px; z-index:3; color:#fff; background:rgba(0,0,0,0.45);
+    padding:8px 10px; border-radius:8px; font-size:13px; }
 </style>
 </head>
 <body>
 
 <video id="video" autoplay playsinline muted></video>
-<div id="three-container"></div>
-
-<!-- الدائرة (reticle) التي يلمسها المستخدم -->
-<div id="reticle" title="اضغط لوضع الموديل"></div>
-
-<div id="hint">حرّك الكاميرا لتدوير، المس الدائرة لوضع الموديل، استخدم pinch للتكبير و two-finger لتدوير.</div>
-<div class="ui-mini">Status: <span id="status">Ready</span></div>
+<div id="three"></div>
+<div id="hud">اضغط منتصف الشاشة (أو اضغط المكان المخصص) لوضع الموديل</div>
+<div id="hint">Pinch للتكبير • إصبع واحد للسحب • إصبعان للتدوير</div>
 
 <script>
 (async ()=>{
 
-// === إعداد الفيديو (كاميرا خلفية) ===
+/* ===========================
+   1) تشغيل الكاميرا الخلفية
+   =========================== */
 const video = document.getElementById('video');
 async function startCamera(){
-  try{
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio:false });
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: { facingMode: { ideal: "environment" } }, audio: false
+    });
     video.srcObject = stream;
     await video.play();
-  }catch(err){
+  } catch(err){
     alert('تعذر فتح الكاميرا: ' + (err.message || err));
     console.error(err);
   }
 }
 await startCamera();
 
-// === إعداد Three.js ===
-const container = document.getElementById('three-container');
-const width = window.innerWidth, height = window.innerHeight;
+/* ===========================
+   2) إعداد Three.js
+   =========================== */
+const container = document.getElementById('three');
 const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true });
-renderer.setSize(width, height);
 renderer.setPixelRatio(window.devicePixelRatio || 1);
+renderer.setSize(window.innerWidth, window.innerHeight);
 container.appendChild(renderer.domElement);
 
 const scene = new THREE.Scene();
 scene.background = null;
 
-const camera = new THREE.PerspectiveCamera(60, width/height, 0.01, 1000);
-camera.position.set(0, 0, 0);
+const camera = new THREE.PerspectiveCamera(60, window.innerWidth/window.innerHeight, 0.01, 1000);
+camera.position.set(0,0,0.05);
 
-// ضوء بسيط
-const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.2);
+// ضوء
+const hemi = new THREE.HemisphereLight(0xffffff, 0x444444, 1.0);
 scene.add(hemi);
 const dir = new THREE.DirectionalLight(0xffffff, 0.8);
 dir.position.set(0.5, 1, 0.3);
 scene.add(dir);
 
-// أرضية افتراضية (مستوى يستخدم لوضع object عند المس)
-const planeDistance = 2.0; // مسافة افتراضية لسطح التثبيت بالأمتار
-const placePlane = new THREE.Plane(new THREE.Vector3(0,0,-1), -planeDistance);
+/* ===========================
+   3) Reticle (حلقة 3D) — ring
+   =========================== */
+const reticle = new THREE.Mesh(
+  new THREE.TorusGeometry(0.15, 0.01, 16, 64),
+  new THREE.MeshStandardMaterial({ color: 0x00c8ff, emissive: 0x00aacc, metalness:0.1, roughness:0.6, transparent:true, opacity:0.95 })
+);
+reticle.rotation.x = -Math.PI/2; // افتراضياً موازٍ للـ XZ (كحلقة على الأرض)
+scene.add(reticle);
 
-// جذع الموديل (Transform)
+// نبدأ reticle غير مرئي حتى نعرضه بعد جاهزية الفيديو/المشهد
+reticle.visible = true;
+
+/* ===========================
+   4) جذع الموديل + ظل
+   =========================== */
 const modelRoot = new THREE.Group();
 modelRoot.visible = false;
 scene.add(modelRoot);
 
-// شبكة ظل بسيط
-const shadowMat = new THREE.MeshBasicMaterial({ color:0x000000, opacity:0.25, transparent:true });
-const shadowGeo = new THREE.PlaneGeometry(1.6,1.6);
-const shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
-shadowMesh.rotation.x = -Math.PI/2;
-shadowMesh.position.y = 0.001;
-shadowMesh.receiveShadow = true;
-shadowMesh.visible = false;
-modelRoot.add(shadowMesh);
+// ظل بسيط (مستوى مع شفافية)
+const shadow = new THREE.Mesh(
+  new THREE.PlaneGeometry(1.4,1.4),
+  new THREE.MeshBasicMaterial({ color:0x000000, opacity:0.25, transparent:true })
+);
+shadow.rotation.x = -Math.PI/2;
+shadow.position.y = 0.001;
+shadow.visible = false;
+modelRoot.add(shadow);
 
-// محمل GLTF
+/* ===========================
+   5) تحميل car.glb أو fallback
+   =========================== */
 const loader = new THREE.GLTFLoader();
 let modelLoaded = false;
 try {
@@ -109,97 +111,114 @@ try {
     loader.load('car.glb', res, null, err => rej(err));
   });
   const root = gltf.scene || gltf.scenes[0];
-  // اضبط حجم وموقع مناسب
+  // ضبط مقياس ابتدائي مناسب (تعدل لاحقاً)
+  root.scale.set(0.6,0.6,0.6);
   root.traverse(n => { if(n.isMesh){ n.castShadow = true; n.receiveShadow = true; }});
-  // ضع تحت modelRoot
-  root.scale.set(0.5,0.5,0.5);
-  root.position.set(0,0,0);
   modelRoot.add(root);
   modelLoaded = true;
   console.log('car.glb loaded');
 } catch(e){
-  console.warn('لم يتم تحميل car.glb — سيتم استخدام مكعب افتراضي', e);
-  const box = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.4,1.2), new THREE.MeshStandardMaterial({color:0x2194ce}));
-  box.position.set(0,0.2,0);
+  console.warn('لم يتم تحميل car.glb — سيظهر مكعب افتراضي', e);
+  const box = new THREE.Mesh(new THREE.BoxGeometry(0.6,0.4,1.2), new THREE.MeshStandardMaterial({ color:0x2194ce }));
+  box.position.y = 0.2;
   modelRoot.add(box);
-  modelLoaded = false;
 }
 
-// === جهاز التوجيه: DeviceOrientationControls لتدوير الكاميرا بناءً على حركة الجهاز ===
-let deviceControls = null;
-if (window.DeviceOrientationEvent){
-  // قد يحتاج طلب إذن على iOS 13+ (handle separately)
-  if (typeof DeviceOrientationEvent.requestPermission === 'function'){
-    // iOS: نطلب الإذن عند أول تفعيل
-    const btn = document.createElement('button');
-    btn.innerText = 'اطلب إذن الحركة';
-    btn.style.cssText = 'position:absolute;z-index:4;right:12px;bottom:12px;padding:8px;border-radius:8px;';
-    document.body.appendChild(btn);
-    btn.onclick = async ()=>{
-      try{
-        const resp = await DeviceOrientationEvent.requestPermission();
-        if (resp === 'granted'){ btn.style.display='none'; initDeviceControls(); }
-        else alert('تم رفض إذن الحركة؛ ستعمل المحاكاة لكن بدون تدوير الجهاز.');
-      }catch(err){ console.warn(err); alert('طلب الإذن غير ممكن: ' + err); }
-    };
-  } else {
-    initDeviceControls();
-  }
-}
-
-function initDeviceControls(){
-  deviceControls = new THREE.DeviceOrientationControls(camera, true);
-  // لا نتصل الآن؛ سنتحدث عن التحديث ضمن اللوب
-}
-
-// === وظائف: تحويل إحداثي الشاشة (مركز الدائرة) إلى نقطة على plane بعيد بمقدار planeDistance ===
-function screenPointToWorld(x, y){
-  // x,y in screen pixels
-  const nx = (x / renderer.domElement.clientWidth) * 2 - 1;
-  const ny = - (y / renderer.domElement.clientHeight) * 2 + 1;
+/* ===========================
+   6) تحويل نقطة شاشة -> موضع في العالم بعمق ثابت
+   =========================== */
+const planeDistance = 2.0; // المسافة الافتراضية أمام الكاميرا بالأمتار
+function screenCenterWorld(offsetX = 0, offsetY = 0){
+  // center of screen offset by tilt offsets in pixels
+  const cx = (window.innerWidth/2) + offsetX;
+  const cy = (window.innerHeight/2) + offsetY;
+  const nx = (cx / window.innerWidth) * 2 - 1;
+  const ny = - (cy / window.innerHeight) * 2 + 1;
   const ndc = new THREE.Vector3(nx, ny, 0.5);
-  ndc.unproject(camera); // now ndc is point on camera space at z
-  // ray from camera to ndc
+  ndc.unproject(camera);
   const dir = ndc.sub(camera.position).normalize();
-  const ray = new THREE.Ray(camera.position.clone(), dir);
-  const hit = new THREE.Vector3();
-  const intersect = ray.intersectPlane(placePlane, hit);
-  if (intersect) return hit;
-  // fallback: point at fixed distance
   return camera.position.clone().add(dir.multiplyScalar(planeDistance));
 }
 
-// === Reticle (دائرة على الشاشة) ===
-const reticle = document.getElementById('reticle');
-const statusEl = document.getElementById('status');
+/* ===========================
+   7) تمرير بيانات الميل (tilt) لتحريك reticle خفيف
+   =========================== */
+let tiltOffsetX = 0; // pixels
+let tiltOffsetY = 0;
+let lastBeta = 90, lastGamma = 0;
 
-// عند لمس الدائرة => ضع الموديل عند تلك الإحداثيات
-reticle.addEventListener('pointerdown', (ev)=>{
-  ev.preventDefault();
-  // احصل موقع مركز الدائرة على الشاشة
-  const rect = reticle.getBoundingClientRect();
-  const cx = rect.left + rect.width/2;
-  const cy = rect.top + rect.height/2;
-  const worldPos = screenPointToWorld(cx, cy);
+function handleDeviceOrientation(ev){
+  // ev.beta: tilt front/back (0..180), ev.gamma: left/right (-90..90)
+  if (ev.beta === null || ev.gamma === null) return;
+  lastBeta = ev.beta;
+  lastGamma = ev.gamma;
+  // نحول الميل إلى إزاحات شاشة صغيرة (مقاسات قابلة للتعديل)
+  const maxOffset = Math.min(window.innerWidth, window.innerHeight) * 0.18; // أقصى تحرك ~18% من الشاشة
+  tiltOffsetX = (ev.gamma / 90) * (maxOffset * 0.35); // يمين/يسار أخف
+  tiltOffsetY = ((ev.beta - 90) / 90) * (maxOffset * 0.35); // أمام/خلف أخف
+  // عندما الهاتف متجه للأسفل (beta كبيرة) نجعل reticle أكثر مسطحاً
+  const flatFactor = Math.min(Math.max((ev.beta - 40) / 50, 0), 1); // 0..1
+  // نحول دوران الحلقة لتبدو مسطحة أكثر عند flatFactor=1
+  reticle.rotation.x = -Math.PI/2 * (0.5 + 0.5 * flatFactor); // يتغير بين -90deg و -90deg* bigger flatten
+  reticle.scale.setScalar(1 + flatFactor*0.15);
+}
 
-  // ضع modelRoot عند الإحداثيات
-  modelRoot.position.copy(worldPos);
-  // اجعل النموذج واقفاً على مستوى الأرض الافتراضي (y=0)
-  // سنحسب ارتفاع بسيط بناءً على bounding box
+/* اطلب إذن الحركة على iOS إن لزم */
+if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+  // لن نطلب تلقائياً؛ المستخدم سيعمل بتوجيه إذا ظهر زر لاحقًا. لكن نضيف مستمع إن وُجد
+  // يمكنك إضافة زر لطلب الإذن إذا تريد تجربة iOS.
+}
+window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+
+/* ===========================
+   8) وضع reticle استناداً للشاشة + الميل
+   =========================== */
+function updateReticle(){
+  const world = screenCenterWorld(tiltOffsetX, tiltOffsetY);
+  reticle.position.copy(world);
+  // اجعل الحلقة دائمًا تواجه الكاميرا قليلاً (اختياري)
+  const toCamera = camera.position.clone().sub(reticle.position).normalize();
+  // ثابت تقليدي: حلقة على الأرض (XZ) لكن يمكن جعلها تميل للخلف قليلاً
+  // reticle.lookAt(camera.position); // لا نستخدمه حتى تبقى مسطحة على الأرض
+}
+
+/* ===========================
+   9) اللمس لوضع الموديل (tap anywhere) — هنا نضعه عند مركز الشاشة (reticle)
+   =========================== */
+let placed = false;
+function placeModelAtReticle(){
+  if (!reticle.visible) return;
+  modelRoot.position.copy(reticle.position);
+  // ابقِ قاعدة النموذج عند y=0 (تعديل بحسب bounding box)
   const box = new THREE.Box3().setFromObject(modelRoot);
   const minY = box.min.y;
-  modelRoot.position.y -= minY; // إجعل القاع عند y=0
+  modelRoot.position.y -= minY; // اجعل القاعدة عند y=0
   modelRoot.visible = true;
-  shadowMesh.visible = true;
-  statusEl.innerText = 'تم وضع النموذج';
+  shadow.visible = true;
+  placed = true;
+  document.getElementById('hud').innerText = 'تم وضع الموديل — يمكنك التكبير/التصغير والسحب والتدوير';
+}
+
+// تفعيل اللمس: نستخدم نقرة في منتصف الشاشة أو أي مكان
+// نربط حدث pointerdown على كامل اللوحة
+renderer.domElement.addEventListener('pointerdown', (ev)=>{
+  // إذا المستخدم ضغط بإصبعين (pinch start) لا نضع الموديل
+  if (ongoing.pointers.size > 0 && ongoing.pointers.size !== 0) {
+    // سيتم التعامل في منطق الإيماءات
+  } else {
+    // نفعل وضع عندما يكون مكان اللمس قريب من منتصف الشاشة (اختياري)
+    // هنا نترجم أنه أي نقرة تضع الموديل في مركز reticle
+    placeModelAtReticle();
+  }
 });
 
-// === Gesture handling: pinch to scale, one-finger drag to translate in screen plane, two-finger rotate to rotate model ===
-let ongoing = { pointers: new Map(), initialDistance:0, initialScale:1, rotating:false, translating:false, lastPan:null };
+/* ===========================
+   10) Gestures: pinch scale, two-finger rotate, one-finger drag (translate)
+   =========================== */
+const ongoing = { pointers: new Map(), initialDistance:0, initialScale:1, initialAngle:0, lastPan:null };
 
-function getDistance(p1, p2){
-  const dx = p2.clientX - p1.clientX;
-  const dy = p2.clientY - p1.clientY;
+function getDistance(p1,p2){
+  const dx = p2.clientX - p1.clientX; const dy = p2.clientY - p1.clientY;
   return Math.hypot(dx,dy);
 }
 function getAngle(p1,p2){
@@ -213,10 +232,8 @@ renderer.domElement.addEventListener('pointerdown', (e)=>{
     const pts = Array.from(ongoing.pointers.values());
     ongoing.initialDistance = getDistance(pts[0], pts[1]);
     ongoing.initialAngle = getAngle(pts[0], pts[1]);
-    ongoing.initialScale = modelRoot.scale ? modelRoot.scale.x : modelRoot.scale; // uniform
-    ongoing.rotating = true;
+    ongoing.initialScale = modelRoot.scale.x || 1;
   } else if (ongoing.pointers.size === 1){
-    ongoing.translating = true;
     ongoing.lastPan = { x: e.clientX, y: e.clientY };
   }
 });
@@ -225,81 +242,70 @@ renderer.domElement.addEventListener('pointermove', (e)=>{
   if (!ongoing.pointers.has(e.pointerId)) return;
   ongoing.pointers.set(e.pointerId, e);
 
-  if (ongoing.pointers.size === 2){
-    // pinch/rotate
+  if (ongoing.pointers.size === 2 && placed){
     const pts = Array.from(ongoing.pointers.values());
     const curDist = getDistance(pts[0], pts[1]);
     const curAngle = getAngle(pts[0], pts[1]);
-    // scale factor
-    const s = (curDist / ongoing.initialDistance) * ongoing.initialScale;
-    modelRoot.scale.setScalar(s);
-    // rotate based on angle delta: rotate around Y axis
-    const deltaAng = curAngle - ongoing.initialAngle;
-    modelRoot.rotation.y = (modelRoot.rotation.y || 0) + deltaAng;
+
+    // scale
+    const scaleFactor = (curDist / ongoing.initialDistance) * ongoing.initialScale;
+    modelRoot.scale.setScalar(scaleFactor);
+
+    // rotate (delta angle)
+    const delta = curAngle - ongoing.initialAngle;
+    modelRoot.rotation.y += delta;
     ongoing.initialAngle = curAngle; // continuous rotation
-  } else if (ongoing.translating && ongoing.pointers.size === 1){
-    // convert screen drag to small translation along plane parallel to camera forward
+  } else if (ongoing.pointers.size === 1 && placed){
+    // pan: نحرك الموديل بشكل خفيف على مستوى الشاشة (محاكاة لتحريكه على الأرض)
     const p = Array.from(ongoing.pointers.values())[0];
     const dx = p.clientX - ongoing.lastPan.x;
     const dy = p.clientY - ongoing.lastPan.y;
     ongoing.lastPan.x = p.clientX; ongoing.lastPan.y = p.clientY;
-    // map pixel delta into world move based on camera fov and distance
-    const factor = 0.0015 * (planeDistance); // tune this factor if needed
-    // move along camera's right and up vectors
-    const right = new THREE.Vector3(); camera.getWorldDirection(right); right.cross(camera.up).normalize(); // right
-    const up = camera.up.clone().normalize();
-    modelRoot.position.addScaledVector(right, dx * -factor);
-    modelRoot.position.addScaledVector(up, dy * factor * 0.7);
+
+    // حساب متجهات right وup في العالم
+    const camDir = new THREE.Vector3(); camera.getWorldDirection(camDir);
+    const camRight = new THREE.Vector3().crossVectors(camera.up, camDir).normalize();
+    const camUp = camera.up.clone().normalize();
+
+    const factor = 0.0015 * planeDistance;
+    modelRoot.position.addScaledVector(camRight, -dx * factor);
+    modelRoot.position.addScaledVector(camUp, dy * factor * 0.7);
   }
 });
 
 renderer.domElement.addEventListener('pointerup', (e)=>{
-  renderer.domElement.releasePointerCapture(e.pointerId);
+  try { renderer.domElement.releasePointerCapture(e.pointerId); } catch(err){}
   ongoing.pointers.delete(e.pointerId);
-  if (ongoing.pointers.size < 2) ongoing.rotating = false;
-  if (ongoing.pointers.size === 0) ongoing.translating = false;
+  ongoing.lastPan = null;
 });
+renderer.domElement.addEventListener('pointercancel', (e)=>{ ongoing.pointers.delete(e.pointerId); ongoing.lastPan = null; });
 
-renderer.domElement.addEventListener('pointercancel', (e)=> {
-  ongoing.pointers.delete(e.pointerId);
-  ongoing.translating = false; ongoing.rotating = false;
-});
-
-// === Fake ground lock: نستخدم ميل الهاتف (deviceorientation beta) لتعديل ارتفاع النموذج قليلاً ===
-let lastBeta = 0;
-window.addEventListener('deviceorientation', (ev)=>{
-  // beta: tilt front/back (degrees); gamma: left/right
-  if (ev.beta !== null){
-    lastBeta = ev.beta;
-    // خريطة بسيطة: عندما تميل للأمام أكثر (beta زيادة) ننقص ارتفاع النموذج قليلاً
-    if (modelRoot.visible){
-      const offset = (ev.beta - 90) / 200; // معدل تعديل صغير
-      modelRoot.position.y = Math.max(0, modelRoot.position.y + offset);
-    }
-  }
-}, true);
-
-// === Animation loop ===
+/* ===========================
+   11) حلقة العرض (render) و تحديثات reticle
+   =========================== */
 function animate(){
   requestAnimationFrame(animate);
-  // update device controls if موجود
-  if (deviceControls) deviceControls.update();
-  // renderer
+  updateReticle();
   renderer.render(scene, camera);
 }
 animate();
 
-// ضبط تغيير الحجم
+/* ===========================
+   12) ضبط الحجم
+   =========================== */
 window.addEventListener('resize', ()=>{
   renderer.setSize(window.innerWidth, window.innerHeight);
   camera.aspect = window.innerWidth / window.innerHeight;
   camera.updateProjectionMatrix();
 });
 
-// لمحة حالة
-statusEl.innerText = 'Ready — اضغط الدائرة لوضع الموديل';
+/* ===========================
+   13) رسالة حالة بسيطة
+   =========================== */
+document.getElementById('hud').innerText = 'اضغط الشاشة لوضع الموديل. حرّك الجهاز لتغيير وضع الحلقة.' + (modelLoaded ? '' : ' (يعمل بموديل افتراضي لأن car.glb لم يُحمّل)');
 
-})();
+})(); // end async
 </script>
+
 </body>
 </html>
